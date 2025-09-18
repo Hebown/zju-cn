@@ -11,7 +11,7 @@ hw 15%，quiz 10%，experiment 25%，final 50%。
 
 
 ## 相关网站
-[**作业网站**](http://10.214.0.253/network/exercise/index.php) 初始用户名是学号，密码是学号的后四位。作业/quiz/实验报告都在这个系统中提交，课件上传到作业系统。
+[作业网站](http://10.214.0.253/network/exercise/index.php) 初始用户名是学号，密码是学号的后四位。作业/quiz/实验报告都在这个系统中提交，课件上传到作业系统。
 
-[**wxb助教的实验文档网站**](https://zjucomp.net)
+[wxb助教的实验文档网站](https://zjucomp.net) 内含几乎所有的课程材料，包括ppt/hw/labs。
 
