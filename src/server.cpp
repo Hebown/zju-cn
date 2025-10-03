@@ -1,115 +1,84 @@
-// 引入一些必要的头文件
+#include <arpa/inet.h>
 #include <iostream>
 #include <string>
-#include <cstring> // For memset
+#include <cstring>
 #include <thread>
-#include <unistd.h> // For close
-#include <sys/socket.h> // For socket functions
-#include <netinet/in.h> // For sockaddr_in
+#include <unistd.h> 
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <vector>
+#include "MySocket/MySocket.hpp"
 #include "glog.hpp"
+
 #define SERVER_PORT 5903
 #define MAX_CLIENT_QUEUE 1
 
-// int handleClient(int clientSocket){
-    // // 创建socket
-    // const std::string greetingMessage="Hello from server!";
-    // int serverSocket=socket(AF_INET, SOCK_STREAM,0);
-    // if(serverSocket<0){
-    //     LOG(ERROR) << "Failed to create socket" << std::endl;
-    //     return -1;
-    // }
-    // // 设置服务器地址信息
-    // sockaddr_in serverAddress;
-    // memset(&serverAddress,0,sizeof(serverAddress));
-    // serverAddress.sin_family=AF_INET;
-    // serverAddress.sin_addr.s_addr=INADDR_ANY;
-    // serverAddress.sin_port=htons(SERVER_PORT);
 
-    // //绑定socket到本地地址
-    // if(bind(serverSocket, (sockaddr*)&serverAddress, sizeof(serverAddress))<0){
-    //     LOG(ERROR) << "Binding failed" << std::endl;
-    //     return -1;
-    // }
-
-    // // 监听
-    // if(listen(serverSocket, 1)<0){ // 一个线程干一个连接，这里指定listen还可以用于告诉OS这个socket是用于监听/接受连接的，不是用于发出请求的。
-    //     LOG(ERROR)<<"Listening failed"<<std::endl;
-    //     return -1;
-    // }
-    // LOG(INFO)<<"Listening in port "<<SERVER_PORT<<"..."<<std::endl;
-
-    // // 连接
-    // LOG(INFO)<<"Connected to Client!"<<std::endl;
-// }
 void handleClient(int clientSocket){
-    const std::string greetingMessage="Hello from server!";
-    send(clientSocket, greetingMessage.c_str(), greetingMessage.length(), 0);
+    try {
+        const std::string greetingMessage = "Hello from lyh!";
+        ssize_t sent = send(clientSocket, greetingMessage.c_str(), greetingMessage.length(), 0);
+        if (sent < 0) {
+            LOG(ERROR) << "Failed to send message to client fd " << clientSocket << ": " << strerror(errno);
+            throw std::runtime_error("Send failed");
+        }
+        LOG(INFO) << "Sent " << sent << " bytes to client fd: " << clientSocket;
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Error in handleClient (fd " << clientSocket << "): " << e.what();
+    }
     close(clientSocket);
+    LOG(INFO) << "Closed client connection (fd: " << clientSocket << ")";
 }
 
 
-int main(int argc,char*argv[]) {
+int main(int argc, char* argv[]) {
     auto glog=GlogWrapper(argv[0]);
     
-    int serverSocket, clientSocket;
-    struct sockaddr_in serverAddress, clientAddress;
-    socklen_t clientAddressLength = sizeof(clientAddress);
-    const char* greetingMessage = "Hello from server!";
+    try {
+        // 创建 ServerSocket 实例
+        ServerSocket server;
 
-    // 创建socket
-    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (serverSocket < 0) {
-        LOG(ERROR) << "Failed to create socket" << std::endl;
-        return -1;
-    }
+        // 设置 SO_REUSEADDR
+        server.set_reuse_addr();
 
-    // 设置服务器地址信息
-    memset(&serverAddress, 0, sizeof(serverAddress));
-    serverAddress.sin_family = AF_INET;
-    serverAddress.sin_addr.s_addr = INADDR_ANY;
-    serverAddress.sin_port = htons(SERVER_PORT);
+        // 设置服务器地址信息
+        struct sockaddr_in serverAddress;
+        memset(&serverAddress, 0, sizeof(serverAddress));
+        serverAddress.sin_family = AF_INET;
+        serverAddress.sin_addr.s_addr = INADDR_ANY;
+        serverAddress.sin_port = htons(SERVER_PORT);
 
-    // 绑定socket到本地地址
-    if (bind(serverSocket, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) < 0) {
-        LOG(ERROR) << "Binding failed" << std::endl;
-        return -1;
-    }
+        // 绑定和监听
+        server.bind((struct sockaddr*)&serverAddress, sizeof(serverAddress));
+        server.listen(MAX_CLIENT_QUEUE);
+        LOG(INFO) << "Server is listening on port " << SERVER_PORT << "...";
 
-    // 开始监听客户端的连接请求
-    if (listen(serverSocket, MAX_CLIENT_QUEUE) < 0) { // 最大连接数为20
-        LOG(ERROR) << "Listening failed" << std::endl;
-        return -1;
-    }
-    LOG(INFO) << "Server is listening on port " << SERVER_PORT << "...";
-    
-    std::vector<std::thread>threads;
+        std::vector<std::thread> threads;
 
-    while (true) {
-        // 接受请求
-        clientSocket=accept(serverSocket, (sockaddr*)&clientAddress, &clientAddressLength);
-        LOG_IF(ERROR, clientSocket < 0) << "A client failed to connect.";
-        LOG_IF(INFO, clientSocket >= 0) << "A client has connected";
-        if(clientSocket<0){
-            return 0;
+        while (true) {
+            try {
+                // 接受客户端连接
+                struct sockaddr_in clientAddress;
+                socklen_t clientAddressLength = sizeof(clientAddress);
+                int clientSocket = server.accept((struct sockaddr*)&clientAddress, &clientAddressLength);
+                
+                // 记录客户端信息
+                char clientIP[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &clientAddress.sin_addr, clientIP, INET_ADDRSTRLEN);
+                LOG(INFO) << "Accepted client connection from " << clientIP << ":" << ntohs(clientAddress.sin_port)
+                          << ", fd: " << clientSocket;
+
+                // 创建线程处理客户端
+                threads.emplace_back(handleClient, clientSocket);
+            } catch (const std::exception& e) {
+                LOG(ERROR) << "Accept failed: " << e.what() << ". Continuing to listen...";
+                continue; 
+            }
         }
-        // 创建新线程
-        threads.emplace_back(handleClient,clientSocket);
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Main error: " << e.what();
+        return 1;
     }
-    // // 接受客户端连接
-    // clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddress, &clientAddressLength);
-    // if (clientSocket < 0) {
-    //     LOG(ERROR) << "Accepting connection failed" << std::endl;
-    //     return -1;
-    // }
-
-    // LOG(INFO)<< "Connected to client!" << std::endl;
-    // // 向客户端发送问好消息
-    // send(clientSocket, greetingMessage, strlen(greetingMessage), 0);
-
-    // // 关闭sockets
-    // close(clientSocket);
-    close(serverSocket);
 
     return 0;
 }

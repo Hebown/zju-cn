@@ -1,8 +1,11 @@
 #include "MySocket.hpp"
 #include <glog/logging.h>
 #include <cerrno>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 MySocket::MySocket(int domain, int type, int protocol) {
     socket_fd = socket(domain, type, protocol);
@@ -43,6 +46,15 @@ int ServerSocket::accept(sockaddr* client_socket_addr, socklen_t* client_saddr_l
     return client_fd;
 }
 
+void ServerSocket::set_reuse_addr(){
+    int opt = 1;
+    if (setsockopt(get_socket_fd(), SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        LOG(ERROR) << "Failed to set SO_REUSEADDR: " << strerror(errno);
+        throw std::runtime_error("Failed to set SO_REUSEADDR: " + std::string(strerror(errno)));
+    }
+    LOG(INFO) << "SO_REUSEADDR set successfully";
+}
+
 ssize_t ServerSocket::send(int client_socket_addr, void* buffer, size_t buffer_size, int flags) {
     ssize_t sent = ::send(client_socket_addr, buffer, buffer_size, flags);
     if (sent < 0) {
@@ -53,12 +65,8 @@ ssize_t ServerSocket::send(int client_socket_addr, void* buffer, size_t buffer_s
     return sent;
 }
 
-ClientSocket::ClientSocket(void* buffer, size_t buffer_len) : buffer(buffer), buffer_len(buffer_len) {
-    if (!buffer && buffer_len > 0) {
-        LOG(ERROR) << "Invalid buffer: null pointer with non-zero length";
-        throw std::invalid_argument("Invalid buffer: null pointer with non-zero length");
-    }
-    LOG(INFO) << "ClientSocket initialized with buffer size: " << buffer_len;
+ClientSocket::ClientSocket(size_t max_buffer_size) : max_buffer_size(max_buffer_size) {
+    LOG(INFO) << "ClientSocket initialized with max buffer size: " << max_buffer_size;
 }
 
 int ClientSocket::connect(sockaddr* server_socket_addr, socklen_t server_saddr_len) {
@@ -72,15 +80,27 @@ int ClientSocket::connect(sockaddr* server_socket_addr, socklen_t server_saddr_l
 }
 
 ssize_t ClientSocket::recv(int flags) {
-    if (!buffer || buffer_len == 0) {
-        LOG(ERROR) << "Cannot receive: buffer is null or size is zero";
-        throw std::runtime_error("Cannot receive: buffer is null or size is zero");
-    }
-    ssize_t received = ::recv(get_socket_fd(), buffer, buffer_len, flags);
+    std::unique_lock<std::mutex>lock(mtx);
+    SocketBuffer socket_buffer(max_buffer_size);
+    ssize_t received = ::recv(get_socket_fd(), socket_buffer.data(), max_buffer_size, flags);
     if (received < 0) {
         LOG(ERROR) << "Receive failed: " << strerror(errno);
         throw std::runtime_error("Receive failed: " + std::string(strerror(errno)));
+    }else if(received==0){
+        LOG(WARNING)<<"Received nothing!";
+        socket_buffer.clear();
+    }else{
+        socket_buffer.resize(received);
+        socket_buffer_queue.push(socket_buffer);
+        LOG(INFO) << "Received " << received << " bytes";
     }
-    LOG(INFO) << "Received " << received << " bytes";
     return received;
+}
+
+std::vector<char> ClientSocket::getSocketBuffer(){
+    std::unique_lock<std::mutex>lock(mtx);
+    if(socket_buffer_queue.empty())return std::vector<char>{};
+    SocketBuffer buffer=std::move(socket_buffer_queue.front());
+    socket_buffer_queue.pop();
+    return std::move(buffer);
 }
