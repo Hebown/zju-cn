@@ -37,5 +37,5 @@ class ClientSocket:public MySocket{
         std::mutex mtx;
         size_t max_buffer_size;
         using  SocketBuffer = std::vector<char> ;
-        std::queue<SocketBuffer>socket_buffer_queue;
+        SocketBuffer buffer;
 };

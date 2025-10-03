@@ -66,6 +66,7 @@ ssize_t ServerSocket::send(int client_socket_addr, void* buffer, size_t buffer_s
 }
 
 ClientSocket::ClientSocket(size_t max_buffer_size) : max_buffer_size(max_buffer_size) {
+    buffer=SocketBuffer(max_buffer_size);
     LOG(INFO) << "ClientSocket initialized with max buffer size: " << max_buffer_size;
 }
 
@@ -81,17 +82,15 @@ int ClientSocket::connect(sockaddr* server_socket_addr, socklen_t server_saddr_l
 
 ssize_t ClientSocket::recv(int flags) {
     std::unique_lock<std::mutex>lock(mtx);
-    SocketBuffer socket_buffer(max_buffer_size);
-    ssize_t received = ::recv(get_socket_fd(), socket_buffer.data(), max_buffer_size, flags);
+    ssize_t received = ::recv(get_socket_fd(), buffer.data(), max_buffer_size, flags);
     if (received < 0) {
         LOG(ERROR) << "Receive failed: " << strerror(errno);
         throw std::runtime_error("Receive failed: " + std::string(strerror(errno)));
     }else if(received==0){
         LOG(WARNING)<<"Received nothing!";
-        socket_buffer.clear();
+        buffer.clear();
     }else{
-        socket_buffer.resize(received);
-        socket_buffer_queue.push(socket_buffer);
+        buffer.resize(received);
         LOG(INFO) << "Received " << received << " bytes";
     }
     return received;
@@ -99,8 +98,5 @@ ssize_t ClientSocket::recv(int flags) {
 
 std::vector<char> ClientSocket::getSocketBuffer(){
     std::unique_lock<std::mutex>lock(mtx);
-    if(socket_buffer_queue.empty())return std::vector<char>{};
-    SocketBuffer buffer=std::move(socket_buffer_queue.front());
-    socket_buffer_queue.pop();
-    return std::move(buffer);
+    return buffer;
 }
